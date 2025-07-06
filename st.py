@@ -116,7 +116,7 @@ def merge_condo(df, condos):
 
 def plot_trend(df, x, y, color, title, yaxis="($)"):
     fig = px.line(df, x=x, y=y, color=color, title=title)
-    fig.update_layout(xaxis_title="", yaxis_title=f"{y} {yaxis}", hovermode="x unified")
+    fig.update_layout(xaxis_title="", yaxis_title=f"{y} {yaxis}")
     return fig
 
 def main():
