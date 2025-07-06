@@ -152,7 +152,7 @@ def main():
     rm = merge_condo(rf, condos)
     if not rm.empty:
         y = rm['lease_commencement_date'].dt.year.max()
-        fig = px.scatter(rm[rm['lease_commencement_date'].dt.year==y], x='mrt_distance', y='rent_psf', color='project_name', hover_data=['nearest_mrt', 'completion'], title=f"MRT Distance vs Rental PSF ({y})")
+        fig = px.scatter(rm[rm['lease_commencement_date'].dt.year==y], x='mrt_distance', y='rent_psf', color='project_name', hover_data=['nearest_mrt', 'completion', 'no_of_bedroom'], title=f"MRT Distance vs Rental PSF ({y})")
         fig.update_layout(xaxis_title="Distance to MRT (m)", yaxis_title="Rental PSF ($)")
         st.plotly_chart(fig, use_container_width=True)
 
