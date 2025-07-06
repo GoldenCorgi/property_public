@@ -107,7 +107,7 @@ def create_filters(df):
     sd = d if 'ALL' in sd else [i for i in sd if i != 'ALL']
     sp = st.sidebar.multiselect("Projects", ['ALL']+sorted(p[df['postal_district'].isin(sd)].dropna().unique()), default=['ALL'])
     sp = sorted(p.unique()) if 'ALL' in sp else [i for i in sp if i != 'ALL']
-    sb = st.sidebar.multiselect("Bedrooms", ['ALL']+sorted(b.dropna().unique()), default=['ALL'])
+    sb = st.sidebar.multiselect("Bedrooms", ['ALL']+sorted(b.dropna().unique()), default=[0, 1])
     sb = sorted(b.dropna().unique()) if 'ALL' in sb else [i for i in sb if i != 'ALL']
     return {'postal_district': sd, 'project_name': sp, 'no_of_bedroom': sb}
 
