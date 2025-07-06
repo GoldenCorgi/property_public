@@ -130,6 +130,7 @@ def main():
     rf = rental[(rental['postal_district'].isin(filters['postal_district'])) &
                 (rental['project_name'].isin(filters['project_name'])) &
                 (rental['no_of_bedroom'].isin(filters['no_of_bedroom']))]
+    rf = rf[rf['rent_psf'].notna()]
     tf = transactions[(transactions['postal_district'].isin(filters['postal_district'])) &
                       (transactions['project_name'].isin(filters['project_name']))]
 
@@ -196,7 +197,7 @@ def main():
     summary = pd.merge(rf.groupby('project_name')['rent_psf'].mean().reset_index(), tf.groupby('project_name')['sale_psf'].mean().reset_index(), on='project_name', how='outer')
     summary = pd.merge(summary, condos[['original_name','nearest_mrt','mrt_distance','number_of_units','completion']], left_on='project_name', right_on='original_name', how='left').drop(columns=['original_name'])
     summary['yield_pct'] = (summary['rent_psf'] * 12 / summary['sale_psf']) * 100
-
+    summary = summary[summary['rent_psf'].notna()]
     if not summary.empty:
         st.dataframe(summary[['project_name','rent_psf','sale_psf','yield_pct','nearest_mrt','mrt_distance','number_of_units','completion']], use_container_width=True)
         st.download_button("Download Summary Data", summary.to_csv(index=False), "property_summary.csv", "text/csv")
