@@ -2,12 +2,14 @@ import pandas as pd
 import streamlit as st
 import plotly.express as px
 import os
+import json
 
 # Configuration
 DATA_DIR = "data"
 RENTAL_FILE = os.path.join(DATA_DIR, "ura_rental_combined.parquet")
 TRANSACTIONS_FILE = os.path.join(DATA_DIR, "ura_transaction_combined.parquet")
 CONDO_FILE = os.path.join(DATA_DIR, "joined_data.csv")
+DISTRICT_MAP_FILE = os.path.join(DATA_DIR, "district_map.json")
 
 @st.cache_data
 def load_data():
@@ -68,60 +70,11 @@ def load_data():
     
     return rental, transactions, condos
 
-def create_filters(rental):
-    """Create sidebar filters with ALL options"""
-    st.sidebar.header("Filters")
-    
-    # District filter
-    districts = sorted(rental['postal_district'].dropna().unique())
-    selected_district = st.sidebar.multiselect(
-        "Postal District",
-        options=['ALL'] + districts,
-        default=[districts[0]],
-        format_func=lambda x: "All Districts" if x == 'ALL' else f"District {x}"
-    )
-    
-    # Convert ALL selection to all districts
-    if 'ALL' in selected_district:
-        selected_district = districts
-    else:
-        selected_district = [d for d in selected_district if d != 'ALL']
-    
-    # Project filter
-    projects = sorted(rental[rental['postal_district'].isin(selected_district)]['project_name'].dropna().unique())
-    selected_projects = st.sidebar.multiselect(
-        "Projects",
-        options=['ALL'] + projects,
-        default=['ALL'],
-        format_func=lambda x: "All Projects" if x == 'ALL' else x
-    )
-    
-    # Convert ALL selection to all projects
-    if 'ALL' in selected_projects:
-        selected_projects = projects
-    else:
-        selected_projects = [p for p in selected_projects if p != 'ALL']
-    
-    # Bedroom filter (rentals only)
-    beds = sorted(rental['no_of_bedroom'].dropna().unique())
-    selected_beds = st.sidebar.multiselect(
-        "Bedrooms",
-        options=['ALL'] + beds,
-        default=['ALL'],
-        format_func=lambda x: "All Bedrooms" if x == 'ALL' else f"{x} Bedroom{'s' if x > 1 else ''}"
-    )
-    
-    # Convert ALL selection to all bedroom types
-    if 'ALL' in selected_beds:
-        selected_beds = beds
-    else:
-        selected_beds = [b for b in selected_beds if b != 'ALL']
-    
-    return {
-        'postal_district': selected_district,
-        'project_name': selected_projects,
-        'no_of_bedroom': selected_beds
-    }
+@st.cache_data
+def load_district_map() -> dict[str, str]:
+    """Load district name mapping from JSON file"""
+    with open(DISTRICT_MAP_FILE, "r", encoding="utf-8") as f:
+        return json.load(f)
 
 def merge_with_condo_data(df, condos):
     """Enrich transaction/rental data with condo info"""
@@ -134,15 +87,6 @@ def merge_with_condo_data(df, condos):
         how='left'
     ).drop(columns=['original_name'])
 
-def plot_trend(df, x_col, y_col, color_col, title):
-    """Standardized trend plot"""
-    fig = px.line(df, x=x_col, y=y_col, color=color_col, title=title)
-    fig.update_layout(
-        xaxis_title="",
-        yaxis_title=f"{y_col} ($)",
-        hovermode="x unified"
-    )
-    return fig
 @st.cache_data
 def load_mrt_data():
     """Load MRT station data"""
@@ -155,7 +99,11 @@ def load_mrt_data():
 def create_filters(df):
     st.sidebar.header("Filters")
     d, p, b = sorted(df['postal_district'].dropna().unique()), df['project_name'], df['no_of_bedroom']
-    sd = st.sidebar.multiselect("Postal District", ['ALL']+d, default=[d[0]], format_func=lambda x: "All Districts" if x=='ALL' else f"District {x}")
+    district_name_map = load_district_map()
+    district_options = [('ALL', 'All Districts')] + [(s, f"{district_name_map.get(str(s).zfill(2), '')}") for s in d]
+    sd = st.sidebar.multiselect(  # Use the district name map for display
+        "Postal District", options=[opt[0] for opt in district_options], default=[district_options[1][0]],  # Default to first real district, not 'ALL'
+        format_func=lambda x: dict(district_options).get(x, f"District {x}"))
     sd = d if 'ALL' in sd else [i for i in sd if i != 'ALL']
     sp = st.sidebar.multiselect("Projects", ['ALL']+sorted(p[df['postal_district'].isin(sd)].dropna().unique()), default=['ALL'])
     sp = sorted(p.unique()) if 'ALL' in sp else [i for i in sp if i != 'ALL']
