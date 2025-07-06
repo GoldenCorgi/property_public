@@ -95,24 +95,65 @@ def load_mrt_data():
     # lower case the Latitude Loingtude column names
     mrt_stations.columns = mrt_stations.columns.str.lower()
     return mrt_stations
-
 def create_filters(df):
     st.sidebar.header("Filters")
     d, p, b = sorted(df['postal_district'].dropna().unique()), df['project_name'], df['no_of_bedroom']
     district_name_map = load_district_map()
     district_options = [('ALL', 'All Districts')] + [(s, f"{district_name_map.get(str(s).zfill(2), '')}") for s in d]
-    sd = st.sidebar.multiselect(  # Use the district name map for display
-        "Postal District", options=[opt[0] for opt in district_options], default=[district_options[1][0]],  # Default to first real district, not 'ALL'
+    sd = st.sidebar.multiselect(
+        "Postal District", options=[opt[0] for opt in district_options], default=[district_options[1][0]],
         format_func=lambda x: dict(district_options).get(x, f"District {x}"))
     sd = d if 'ALL' in sd else [i for i in sd if i != 'ALL']
     sp = st.sidebar.multiselect("Projects", ['ALL']+sorted(p[df['postal_district'].isin(sd)].dropna().unique()), default=['ALL'])
     sp = sorted(p.unique()) if 'ALL' in sp else [i for i in sp if i != 'ALL']
     sb = st.sidebar.multiselect("Bedrooms", ['ALL']+sorted(b.dropna().unique()), default=[0, 1])
     sb = sorted(b.dropna().unique()) if 'ALL' in sb else [i for i in sb if i != 'ALL']
-    return {'postal_district': sd, 'project_name': sp, 'no_of_bedroom': sb}
+
+    # --- New Filters ---
+    # Rent PSF slider
+    rent_psf_min = float(df['rent_psf'].min(skipna=True)) if 'rent_psf' in df else 0.0
+    rent_psf_max = float(df['rent_psf'].max(skipna=True)) if 'rent_psf' in df else 10.0
+    rent_psf_range = st.sidebar.slider(
+        "Rent PSF Range ($)", min_value=round(rent_psf_min, 2), max_value=round(rent_psf_max, 2),
+        value=(3.0, 8.0), step=0.1)
+    include_na_rent_psf = st.sidebar.checkbox("Include NA Rent PSF", value=False)
+
+    # Distance to MRT slider
+    mrt_distance_min = float(df['mrt_distance'].min(skipna=True)) if 'mrt_distance' in df else 0.0
+    mrt_distance_max = float(df['mrt_distance'].max(skipna=True)) if 'mrt_distance' in df else 2000.0
+    mrt_distance_range = st.sidebar.slider(
+        "Distance to MRT (m)", min_value=int(mrt_distance_min), max_value=int(mrt_distance_max),
+        value=(int(mrt_distance_min), 800), step=10)
+    include_na_mrt_distance = st.sidebar.checkbox("Include NA MRT Distance", value=True)
+
+    # Completion year slider
+    completion_min = int(df['completion'].min(skipna=True)) if 'completion' in df and df['completion'].notna().any() else 1980
+    completion_max = int(df['completion'].max(skipna=True)) if 'completion' in df and df['completion'].notna().any() else 2025
+    completion_range = st.sidebar.slider(
+        "Completion Year", min_value=completion_min, max_value=completion_max,
+        value=(2000, completion_max), step=1)
+    include_na_completion = st.sidebar.checkbox("Include NA Completion Year", value=True)
+
+    return {
+        'postal_district': sd,
+        'project_name': sp,
+        'no_of_bedroom': sb,
+        'rent_psf_range': rent_psf_range,
+        'include_na_rent_psf': include_na_rent_psf,
+        'mrt_distance_range': mrt_distance_range,
+        'include_na_mrt_distance': include_na_mrt_distance,
+        'completion_range': completion_range,
+        'include_na_completion': include_na_completion,
+    }
 
 def merge_condo(df, condos):
-    return df.merge(condos[['original_name','nearest_mrt','mrt_distance','number_of_units','completion','latitude','longitude']], left_on='project_name', right_on='original_name', how='left').drop(columns=['original_name'])
+    # Merge but keep the left (df) column if there are duplicate column names
+    merged = pd.merge(df,condos,left_on='project_name',right_on='original_name',how='left',suffixes=('', '_condo'))
+    for col in df.columns:
+        dup_col = f"{col}_condo"
+        if dup_col in merged.columns:
+            merged = merged.drop(columns=[dup_col])
+    return merged
 
 def plot_trend(df, x, y, color, title, yaxis="($)"):
     fig = px.line(df, x=x, y=y, color=color, title=title)
@@ -125,17 +166,52 @@ def main():
     st.markdown("Comprehensive analysis combining URA rental/transaction data with MRT proximity.")
 
     rental, transactions, condos = load_data()
+    rental = merge_condo(rental, condos)
     filters = create_filters(rental)
 
-    rf = rental[(rental['postal_district'].isin(filters['postal_district'])) &
-                (rental['project_name'].isin(filters['project_name'])) &
-                (rental['no_of_bedroom'].isin(filters['no_of_bedroom']))]
+    # Apply all filters to rental data
+    rf = rental[
+        (rental['postal_district'].isin(filters['postal_district'])) &
+        (rental['project_name'].isin(filters['project_name'])) &
+        (rental['no_of_bedroom'].isin(filters['no_of_bedroom']))
+    ]
+
+    # Rent PSF filter
+    # Use latest year
+    rf_2025 = rf[rf['lease_commencement_date'].dt.year == rf['lease_commencement_date'].dt.year.max()]
+    # Group by project_name and get average rent_psf within the year
+    rent_psf_min, rent_psf_max = filters['rent_psf_range']
+    avg_rent_psf = rf_2025.groupby('project_name')['rent_psf'].mean()
+    # Filter project names within the selected rent_psf range
+    valid_projects = avg_rent_psf[(avg_rent_psf >= rent_psf_min) & (avg_rent_psf <= rent_psf_max)].index.tolist()
+    rf = rf[rf['project_name'].isin(valid_projects)]
+    if filters['include_na_rent_psf']:
+        rf = rf[(rf['project_name'].isin(valid_projects)) | (rf['rent_psf'].isna())]
+    else:
+        rf = rf[rf['project_name'].isin(valid_projects)]
+
+    # MRT distance filter
+    
+    # Merge filtered rental data with condo info for further filtering
+    mrt_distance_min, mrt_distance_max = filters['mrt_distance_range']
+    if filters['include_na_mrt_distance']:
+        rf = rf[(rf['mrt_distance'].between(mrt_distance_min, mrt_distance_max)) | (rf['mrt_distance'].isna())]
+    else:
+        rf = rf[rf['mrt_distance'].between(mrt_distance_min, mrt_distance_max)]
+
+    # Completion year filter
+    completion_min, completion_max = filters['completion_range']
+    if filters['include_na_completion']:
+        rf = rf[((rf['completion'] >= completion_min) & (rf['completion'] <= completion_max)) | (rf['completion'].isna())]
+    else:
+        rf = rf[(rf['completion'] >= completion_min) & (rf['completion'] <= completion_max)]
+
     rf = rf[rf['rent_psf'].notna()]
     tf = transactions[(transactions['postal_district'].isin(filters['postal_district'])) &
                       (transactions['project_name'].isin(filters['project_name']))]
 
     col1, col2, col3 = st.columns(3)
-    col1.metric("Projects", len(filters['project_name']))
+    col1.metric("Projects", len(rf['project_name'].unique()))
     col2.metric("Rental Listings", len(rf))
     col3.metric("Sale Transactions", len(tf))
 
@@ -194,7 +270,8 @@ def main():
 
 
     st.header("Project Summary")
-    summary = pd.merge(rf.groupby('project_name')['rent_psf'].mean().reset_index(), tf.groupby('project_name')['sale_psf'].mean().reset_index(), on='project_name', how='outer')
+    rf_2025 = rf[rf['lease_commencement_date'].dt.year == 2025]
+    summary = pd.merge(rf_2025.groupby('project_name')['rent_psf'].mean().reset_index(), tf.groupby('project_name')['sale_psf'].mean().reset_index(), on='project_name', how='outer')
     summary = pd.merge(summary, condos[['original_name','nearest_mrt','mrt_distance','number_of_units','completion']], left_on='project_name', right_on='original_name', how='left').drop(columns=['original_name'])
     summary['yield_pct'] = (summary['rent_psf'] * 12 / summary['sale_psf']) * 100
     summary = summary[summary['rent_psf'].notna()]
